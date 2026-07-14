@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
 
-// Ambient deep-space background: twinkling starfield, soft drifting nebula
-// tones, a signal-graph node network with traveling pulses, and a slowly
-// drifting black hole with a rotating accretion disk. Kept low-opacity and
-// slow so it never competes with foreground content.
+import gsap from 'gsap'
+import { ScrollTrigger } from 'gsap/ScrollTrigger'
+gsap.registerPlugin(ScrollTrigger)
+
+
 export default function SignalBackground() {
   const canvasRef = useRef(null)
 
@@ -17,6 +18,17 @@ export default function SignalBackground() {
     function resize() {
       W = canvas.width = window.innerWidth
       H = canvas.height = window.innerHeight
+    
+    const scrollOffset = { y: 0 }
+    ScrollTrigger.create({
+      trigger: document.body,
+      start: 'top top',
+      end: 'bottom bottom',
+      scrub: 1,
+      onUpdate: (self) => {
+        scrollOffset.y = self.progress * 300 // tune this number for more/less drift
+  },
+})
     }
     resize()
     window.addEventListener('resize', resize)
@@ -130,6 +142,29 @@ export default function SignalBackground() {
       ctx.fillStyle = '#000000'
       ctx.fill()
     }
+    function drawSun() {
+  const sx = sun.xF * W, sy = sun.yF * H + scrollOffset.y * 0.3
+  // ...rest unchanged
+}
+function drawPlanet(p) {
+  const wob = reduced ? 0 : Math.sin(drift + p.t * 10) * 4
+  const x = (sun.xF + (far_.xF - sun.xF) * p.t) * W + wob
+  const y = (sun.yF + (far_.yF - sun.yF) * p.t) * H + scrollOffset.y * (0.15 + p.t * 0.3)
+  // ...rest unchanged
+}
+useEffect(() => {
+  gsap.utils.toArray('.gsap-reveal').forEach((el) => {
+    gsap.fromTo(
+      el,
+      { opacity: 0, y: 40, filter: 'blur(6px)' },
+      {
+        opacity: 1, y: 0, filter: 'blur(0px)',
+        duration: 1,
+        scrollTrigger: { trigger: el, start: 'top 85%' },
+      }
+    )
+  })
+}, [])
 
     let spawnTimer = 0
     function render() {
@@ -206,4 +241,9 @@ export default function SignalBackground() {
       aria-hidden="true"
     />
   )
+  return () => {
+  cancelAnimationFrame(raf)
+  window.removeEventListener('resize', resize)
+  ScrollTrigger.getAll().forEach((t) => t.kill())
+}
 }

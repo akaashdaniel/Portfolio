@@ -8,8 +8,11 @@ import Projects from './components/Projects'
 import Experience from './components/Experience'
 import Contact from './components/Contact'
 import Footer from './components/Footer'
+import useLenis from './hooks/useLenis'
 
 export default function App() {
+  useLenis()
+
   return (
     <div className="relative min-h-screen bg-bg font-body">
       <SignalBackground />
