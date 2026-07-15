@@ -11,19 +11,41 @@ const reveal = (delay = 0) => ({
 function Avatar() {
   const containerRef = useRef(null)
   const armRef = useRef(null)
+  const rectRef = useRef(null)
+  const blinkTimeoutRef = useRef(null)
+  const excitedTimeoutRef = useRef(null)
+
   const [isHovered, setIsHovered] = useState(false)
   const [isBlinking, setIsBlinking] = useState(false)
   const [isExcited, setIsExcited] = useState(false)
+  const [reduced, setReduced] = useState(false)
 
   const mouseX = useMotionValue(0)
   const mouseY = useMotionValue(0)
   const eyeX = useSpring(mouseX, { stiffness: 150, damping: 15 })
   const eyeY = useSpring(mouseY, { stiffness: 150, damping: 15 })
 
+  // Respect OS-level motion sensitivity preference
   useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    setReduced(mq.matches)
+    const handler = (e) => setReduced(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
+  // Cache bounding rect on scroll/resize instead of recomputing on every mousemove
+  useEffect(() => {
+    if (reduced) return
+
+    rectRef.current = containerRef.current?.getBoundingClientRect()
+    const updateRect = () => {
+      rectRef.current = containerRef.current?.getBoundingClientRect()
+    }
+
     const handleMove = (e) => {
-      if (!containerRef.current) return
-      const rect = containerRef.current.getBoundingClientRect()
+      const rect = rectRef.current
+      if (!rect) return
       const cx = rect.left + rect.width / 2
       const cy = rect.top + rect.height / 2
       const dx = e.clientX - cx
@@ -33,28 +55,39 @@ function Avatar() {
       mouseX.set((dx / dist) * maxOffset)
       mouseY.set((dy / dist) * maxOffset)
     }
-    window.addEventListener('mousemove', handleMove)
-    return () => window.removeEventListener('mousemove', handleMove)
-  }, [mouseX, mouseY])
 
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('scroll', updateRect, { passive: true })
+    window.addEventListener('resize', updateRect)
+    return () => {
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('scroll', updateRect)
+      window.removeEventListener('resize', updateRect)
+    }
+  }, [mouseX, mouseY, reduced])
+
+  // Blink cycle — timeout tracked in a ref so it can be cleared on unmount
   useEffect(() => {
-    let timeout
+    if (reduced) return
+    let scheduleTimeout
     const scheduleBlink = () => {
-      timeout = setTimeout(() => {
+      scheduleTimeout = setTimeout(() => {
         setIsBlinking(true)
-        setTimeout(() => setIsBlinking(false), 150)
+        blinkTimeoutRef.current = setTimeout(() => setIsBlinking(false), 150)
         scheduleBlink()
       }, 2200 + Math.random() * 2600)
     }
     scheduleBlink()
-    return () => clearTimeout(timeout)
-  }, [])
+    return () => {
+      clearTimeout(scheduleTimeout)
+      clearTimeout(blinkTimeoutRef.current)
+    }
+  }, [reduced])
 
-  // arm rotation — written directly as a native SVG transform each frame,
-  // pivoting exactly at the shoulder point (76, 40). No CSS transform-origin involved.
+  // Arm sway — imperative rotation via ref, skipped entirely if reduced motion
   useAnimationFrame((t) => {
-    if (!armRef.current) return
-    const base = 212 // resting "raised hand" angle, safely up-and-right of the shoulder
+    if (reduced || !armRef.current) return
+    const base = 212
     const speed = isExcited ? 0.012 : isHovered ? 0.0044 : 0.0022
     const range = isExcited ? 22 : isHovered ? 16 : 11
     const angle = base + Math.sin(t * speed) * range
@@ -62,9 +95,23 @@ function Avatar() {
   })
 
   const handleClick = () => {
+    if (reduced) return
     setIsExcited(true)
-    setTimeout(() => setIsExcited(false), 900)
+    clearTimeout(excitedTimeoutRef.current)
+    excitedTimeoutRef.current = setTimeout(() => setIsExcited(false), 900)
   }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      handleClick()
+    }
+  }
+
+  // Clean up any in-flight excited timeout on unmount
+  useEffect(() => {
+    return () => clearTimeout(excitedTimeoutRef.current)
+  }, [])
 
   const particles = [0, 1, 2, 3].map((i) => ({
     id: i,
@@ -76,23 +123,35 @@ function Avatar() {
   return (
     <motion.div
       ref={containerRef}
+      role="button"
+      tabIndex={0}
+      aria-label="Click to make the avatar excited"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={handleClick}
-      animate={{ y: isExcited ? [0, -18, 0, -8, 0] : [0, -5, 0] }}
+      onKeyDown={handleKeyDown}
+      animate={
+        reduced
+          ? {}
+          : { y: isExcited ? [0, -18, 0, -8, 0] : [0, -5, 0] }
+      }
       transition={
         isExcited
           ? { duration: 0.7, ease: 'easeOut' }
           : { duration: 3.5, repeat: Infinity, ease: 'easeInOut' }
       }
-      style={{ display: 'inline-block', position: 'relative', cursor: 'pointer' }}
+      style={{ display: 'inline-block', position: 'relative', cursor: 'pointer', outline: 'none' }}
     >
       <motion.div
-        animate={{
-          opacity: isHovered || isExcited ? [0.3, 0.55, 0.3] : [0.15, 0.3, 0.15],
-          scale: isExcited ? [1, 1.3, 1] : 1,
-        }}
-        transition={{ duration: isExcited ? 0.7 : 3.5, repeat: isExcited ? 0 : Infinity, ease: 'easeInOut' }}
+        animate={
+          reduced
+            ? { opacity: 0.2 }
+            : {
+                opacity: isHovered || isExcited ? [0.3, 0.55, 0.3] : [0.15, 0.3, 0.15],
+                scale: isExcited ? [1, 1.3, 1] : 1,
+              }
+        }
+        transition={{ duration: isExcited ? 0.7 : 3.5, repeat: isExcited || reduced ? 0 : Infinity, ease: 'easeInOut' }}
         style={{
           position: 'absolute', inset: -10, borderRadius: '50%',
           background: 'radial-gradient(circle, rgba(180,120,70,0.35), transparent 70%)',
@@ -100,24 +159,25 @@ function Avatar() {
         }}
       />
 
-      {particles.map((p) => (
-        <motion.span
-          key={p.id}
-          animate={{ y: [0, -50], opacity: [0, 0.6, 0] }}
-          transition={{ duration: p.duration, repeat: Infinity, delay: p.delay, ease: 'easeOut' }}
-          style={{
-            position: 'absolute',
-            left: `calc(50% + ${p.x}px)`,
-            bottom: 10,
-            width: 3,
-            height: 3,
-            borderRadius: '50%',
-            background: '#e8a25a',
-            zIndex: 0,
-            pointerEvents: 'none',
-          }}
-        />
-      ))}
+      {!reduced &&
+        particles.map((p) => (
+          <motion.span
+            key={p.id}
+            animate={{ y: [0, -50], opacity: [0, 0.6, 0] }}
+            transition={{ duration: p.duration, repeat: Infinity, delay: p.delay, ease: 'easeOut' }}
+            style={{
+              position: 'absolute',
+              left: `calc(50% + ${p.x}px)`,
+              bottom: 10,
+              width: 3,
+              height: 3,
+              borderRadius: '50%',
+              background: '#e8a25a',
+              zIndex: 0,
+              pointerEvents: 'none',
+            }}
+          />
+        ))}
 
       <svg width="92" height="110" viewBox="0 0 100 120" style={{ position: 'relative', zIndex: 1 }}>
         {/* back-left leg */}
@@ -131,8 +191,12 @@ function Avatar() {
         {/* rocky body — angular inverted-triangle gem, breathes idly */}
         <motion.g
           style={{ transformOrigin: '50px 58px' }}
-          animate={{ scale: isExcited ? [1, 1.06, 1] : [1, 1.015, 1] }}
-          transition={{ duration: isExcited ? 0.5 : 4, repeat: isExcited ? 0 : Infinity, ease: 'easeInOut' }}
+          animate={
+            reduced
+              ? {}
+              : { scale: isExcited ? [1, 1.06, 1] : [1, 1.015, 1] }
+          }
+          transition={{ duration: isExcited ? 0.5 : 4, repeat: isExcited || reduced ? 0 : Infinity, ease: 'easeInOut' }}
         >
           <path
             d="M28,20 L72,20 L82,42 L68,80 L50,96 L32,80 L18,42 Z"
@@ -144,10 +208,10 @@ function Avatar() {
         </motion.g>
 
         {/* eyes — idle wander + cursor tracking + blink + brighten on hover/click */}
-        <motion.g style={{ x: eyeX, y: eyeY }}>
+        <motion.g style={reduced ? {} : { x: eyeX, y: eyeY }}>
           <motion.g
-            animate={{ x: [0, 1.5, -1.5, 0], y: [0, -1, 1, 0] }}
-            transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
+            animate={reduced ? {} : { x: [0, 1.5, -1.5, 0], y: [0, -1, 1, 0] }}
+            transition={{ duration: 4.5, repeat: reduced ? 0 : Infinity, ease: 'easeInOut' }}
           >
             <motion.circle
               cx="40" cy="45" r="3.3" fill="#e8a25a"
@@ -170,7 +234,7 @@ function Avatar() {
           </motion.g>
         </motion.g>
 
-        {/* front-right arm — rotation set imperatively each frame via ref, see useAnimationFrame above */}
+        {/* front-right arm — rotation set imperatively each frame via ref */}
         <g ref={armRef}>
           <rect x="71.5" y="40" width="9" height="34" rx="4.5" fill="#6b4b2f" />
         </g>
