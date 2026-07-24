@@ -1,9 +1,26 @@
 import { useEffect, useRef } from 'react'
-
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
+
 gsap.registerPlugin(ScrollTrigger)
 
+const TAU = Math.PI * 2
+
+// Sun sits low-left; planets recede on a diagonal toward the far upper-right
+// corner, getting smaller and more distant as t -> 1.
+const SUN = { xF: 0.09, yF: 0.95 }
+const FAR = { xF: 0.98, yF: 0.03 }
+
+const PLANETS = [
+  { t: 0.14, size: 3.4, color: '#8a7f74', trail: 3 },
+  { t: 0.25, size: 4.6, color: '#c9a56d', trail: 4 },
+  { t: 0.36, size: 4.8, color: '#7d93a0', trail: 4 },
+  { t: 0.47, size: 3.6, color: '#a25c3c', trail: 4 },
+  { t: 0.59, size: 8.2, color: '#b99a7c', trail: 5 },
+  { t: 0.71, size: 6.8, color: '#c8b48a', trail: 5, ring: true },
+  { t: 0.83, size: 5.0, color: '#7fa3a1', trail: 4 },
+  { t: 0.93, size: 4.4, color: '#5f72a3', trail: 4 },
+]
 
 export default function SignalBackground() {
   const canvasRef = useRef(null)
@@ -11,28 +28,26 @@ export default function SignalBackground() {
   useEffect(() => {
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
-    let W, H, nodes, edges, pulses, raf
-
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    let W, H, nodes, edges, pulses, raf
+    const scroll = { y: 0 }
+    const pointer = { x: 0.5, y: 0.5, tx: 0.5, ty: 0.5 }
 
     function resize() {
       W = canvas.width = window.innerWidth
       H = canvas.height = window.innerHeight
-    
-    const scrollOffset = { y: 0 }
-    ScrollTrigger.create({
-      trigger: document.body,
-      start: 'top top',
-      end: 'bottom bottom',
-      scrub: 1,
-      onUpdate: (self) => {
-        scrollOffset.y = self.progress * 300 // tune this number for more/less drift
-  },
-})
     }
     resize()
     window.addEventListener('resize', resize)
 
+    function onPointerMove(e) {
+      pointer.tx = e.clientX / window.innerWidth
+      pointer.ty = e.clientY / window.innerHeight
+    }
+    if (!reduced) window.addEventListener('mousemove', onPointerMove)
+
+    // ---------- signal-graph node network ----------
     function buildGraph() {
       const count = Math.max(16, Math.min(30, Math.floor((W * H) / 70000)))
       nodes = Array.from({ length: count }, () => ({
@@ -55,6 +70,7 @@ export default function SignalBackground() {
     }
     buildGraph()
 
+    // ---------- starfield ----------
     function mkStars(n, minR, maxR, speed, alpha) {
       return Array.from({ length: n }, () => ({
         x: Math.random() * W, y: Math.random() * H,
@@ -66,20 +82,22 @@ export default function SignalBackground() {
     const far = mkStars(120, 0.2, 0.6, 0.025, 0.28)
     const mid = mkStars(60, 0.4, 0.9, 0.06, 0.4)
 
-    function drawStars(stars) {
+    function drawStars(stars, parallax) {
+      const ox = (pointer.x - 0.5) * parallax
+      const oy = (pointer.y - 0.5) * parallax
       stars.forEach((s) => {
         s.x -= s.speed
         if (s.x < 0) { s.x = W; s.y = Math.random() * H }
         s.tw += s.tws
         const t = Math.sin(s.tw) * 0.25 + 0.75
         ctx.beginPath()
-        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
+        ctx.arc(s.x + ox, s.y + oy, s.r, 0, TAU)
         ctx.fillStyle = `rgba(200,196,190,${s.alpha * t})`
         ctx.fill()
       })
     }
 
-    // Soft drifting nebula tones — warm ash / cold charcoal, very low opacity
+    // ---------- ambient nebula ----------
     const nebulae = [
       { x: 0.2, y: 0.25, r: 0.22, c: 'rgba(148,143,136,', a: 0.02 },
       { x: 0.82, y: 0.7, r: 0.2, c: 'rgba(55,30,30,', a: 0.03 },
@@ -98,84 +116,145 @@ export default function SignalBackground() {
       })
     }
 
-    // Black hole: slow drift path + rotating accretion disk
-    const hole = {
-      x: 0, y: 0, baseX: 0.78, baseY: 0.28, driftT: Math.random() * Math.PI * 2,
-      rot: 0,
-    }
-    function drawBlackHole() {
-      hole.driftT += 0.0006
-      hole.x = (hole.baseX + Math.sin(hole.driftT) * 0.06) * W
-      hole.y = (hole.baseY + Math.cos(hole.driftT * 0.7) * 0.05) * H
-      hole.rot += reduced ? 0 : 0.0018
+    // ---------- solar system ----------
+    let driftT = Math.random() * TAU
+    let sunPulse = 0
 
-      const coreR = Math.min(W, H) * 0.035
+    function drawSun(sx, sy) {
+      sunPulse += reduced ? 0 : 0.02
+      const pulse = 1 + Math.sin(sunPulse) * 0.06
+      const coreR = Math.min(W, H) * 0.032 * pulse
 
-      // outer glow
-      const glow = ctx.createRadialGradient(hole.x, hole.y, coreR * 0.5, hole.x, hole.y, coreR * 6)
-      glow.addColorStop(0, 'rgba(120,70,40,0.12)')
+      const glow = ctx.createRadialGradient(sx, sy, coreR * 0.4, sx, sy, coreR * 7)
+      glow.addColorStop(0, 'rgba(220,160,90,0.18)')
       glow.addColorStop(1, 'transparent')
       ctx.fillStyle = glow
       ctx.beginPath()
-      ctx.arc(hole.x, hole.y, coreR * 6, 0, Math.PI * 2)
+      ctx.arc(sx, sy, coreR * 7, 0, TAU)
       ctx.fill()
 
-      // accretion disk — rotated ellipse rings
-      ctx.save()
-      ctx.translate(hole.x, hole.y)
-      ctx.rotate(hole.rot)
-      for (let i = 0; i < 3; i++) {
-        const rx = coreR * (2.2 + i * 0.9)
-        const ry = rx * 0.32
-        ctx.beginPath()
-        ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2)
-        const alpha = 0.22 - i * 0.06
-        ctx.strokeStyle = `rgba(180,110,60,${alpha})`
-        ctx.lineWidth = coreR * 0.18
-        ctx.stroke()
-      }
-      ctx.restore()
-
-      // event horizon core (blocks center)
+      const core = ctx.createRadialGradient(sx - coreR * 0.3, sy - coreR * 0.3, 0, sx, sy, coreR)
+      core.addColorStop(0, '#f2c98a')
+      core.addColorStop(1, '#c9863f')
       ctx.beginPath()
-      ctx.arc(hole.x, hole.y, coreR, 0, Math.PI * 2)
-      ctx.fillStyle = '#000000'
+      ctx.arc(sx, sy, coreR, 0, TAU)
+      ctx.fillStyle = core
       ctx.fill()
     }
-    function drawSun() {
-  const sx = sun.xF * W, sy = sun.yF * H + scrollOffset.y * 0.3
-  // ...rest unchanged
-}
-function drawPlanet(p) {
-  const wob = reduced ? 0 : Math.sin(drift + p.t * 10) * 4
-  const x = (sun.xF + (far_.xF - sun.xF) * p.t) * W + wob
-  const y = (sun.yF + (far_.yF - sun.yF) * p.t) * H + scrollOffset.y * (0.15 + p.t * 0.3)
-  // ...rest unchanged
-}
-useEffect(() => {
-  gsap.utils.toArray('.gsap-reveal').forEach((el) => {
-    gsap.fromTo(
-      el,
-      { opacity: 0, y: 40, filter: 'blur(6px)' },
-      {
-        opacity: 1, y: 0, filter: 'blur(0px)',
-        duration: 1,
-        scrollTrigger: { trigger: el, start: 'top 85%' },
+
+    function drawPlanet(p, i, sx, sy, fx, fy) {
+      const wob = reduced ? 0 : Math.sin(driftT * 0.6 + i * 1.3) * 4
+      const parX = (10 + p.t * 34) * (pointer.x - 0.5)
+      const parY = (6 + p.t * 20) * (pointer.y - 0.5)
+      const x = sx + (fx - sx) * p.t + wob + parX
+      const y = sy + (fy - sy) * p.t + scroll.y * (0.12 + p.t * 0.35) + parY
+
+      // dust trail back toward the sun
+      for (let k = 1; k <= p.trail; k++) {
+        const tt = k / (p.trail + 1)
+        const trailX = x - (x - sx) * tt * 0.12
+        const trailY = y - (y - sy) * tt * 0.12
+        ctx.beginPath()
+        ctx.arc(trailX, trailY, p.size * (1 - tt) * 0.35, 0, TAU)
+        ctx.fillStyle = `rgba(190,160,130,${0.1 * (1 - tt)})`
+        ctx.fill()
       }
-    )
-  })
-}, [])
+
+      if (p.ring) {
+        ctx.save()
+        ctx.translate(x, y)
+        ctx.rotate(-0.35)
+        ctx.beginPath()
+        ctx.ellipse(0, 0, p.size * 2.1, p.size * 0.7, 0, 0, TAU)
+        ctx.strokeStyle = 'rgba(200,180,140,0.35)'
+        ctx.lineWidth = 1
+        ctx.stroke()
+        ctx.restore()
+      }
+
+      ctx.beginPath()
+      ctx.arc(x, y, p.size, 0, TAU)
+      ctx.fillStyle = p.color
+      ctx.fill()
+    }
+
+    function drawSolarSystem() {
+      driftT += reduced ? 0 : 0.004
+      const sx = SUN.xF * W + (pointer.x - 0.5) * 16
+      const sy = SUN.yF * H + scroll.y * 0.1 + (pointer.y - 0.5) * 8
+      const fx = FAR.xF * W
+      const fy = FAR.yF * H
+      drawSun(sx, sy)
+      PLANETS.forEach((p, i) => drawPlanet(p, i, sx, sy, fx, fy))
+    }
+
+    // ---------- occasional comet streak ----------
+    let comet = null
+    function maybeSpawnComet() {
+      if (reduced || comet) return
+      if (Math.random() < 0.0012) {
+        comet = {
+          x: -60,
+          y: Math.random() * H * 0.35,
+          vx: 7 + Math.random() * 3,
+          vy: 2.2 + Math.random() * 1.4,
+        }
+      }
+    }
+    function drawComet() {
+      if (!comet) return
+      comet.x += comet.vx
+      comet.y += comet.vy
+      const tailX = comet.x - comet.vx * 6
+      const tailY = comet.y - comet.vy * 6
+      const grad = ctx.createLinearGradient(tailX, tailY, comet.x, comet.y)
+      grad.addColorStop(0, 'rgba(230,210,180,0)')
+      grad.addColorStop(1, 'rgba(240,220,190,0.8)')
+      ctx.strokeStyle = grad
+      ctx.lineWidth = 1.6
+      ctx.beginPath()
+      ctx.moveTo(tailX, tailY)
+      ctx.lineTo(comet.x, comet.y)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.arc(comet.x, comet.y, 1.6, 0, TAU)
+      ctx.fillStyle = 'rgba(250,235,210,0.95)'
+      ctx.fill()
+      if (comet.x > W + 60 || comet.y > H + 60) comet = null
+    }
+
+    // ---------- scroll-driven parallax (created once, top-level of this effect) ----------
+    let st
+    if (!reduced) {
+      st = ScrollTrigger.create({
+        trigger: document.body,
+        start: 'top top',
+        end: 'bottom bottom',
+        scrub: 1,
+        onUpdate: (self) => {
+          scroll.y = self.progress * 300
+        },
+      })
+    }
+
+    function tickPointer() {
+      pointer.x += (pointer.tx - pointer.x) * 0.05
+      pointer.y += (pointer.ty - pointer.y) * 0.05
+    }
 
     let spawnTimer = 0
     function render() {
+      tickPointer()
       ctx.clearRect(0, 0, W, H)
       ctx.fillStyle = '#0A0A0A'
       ctx.fillRect(0, 0, W, H)
 
       drawNeb()
-      drawStars(far)
-      drawStars(mid)
-      drawBlackHole()
+      drawStars(far, 14)
+      drawStars(mid, 26)
+      drawSolarSystem()
+      maybeSpawnComet()
+      drawComet()
 
       nodes.forEach((n) => {
         n.x += n.vx; n.y += n.vy
@@ -197,7 +276,7 @@ useEffect(() => {
       })
       nodes.forEach((n) => {
         ctx.beginPath()
-        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2)
+        ctx.arc(n.x, n.y, n.r, 0, TAU)
         ctx.fillStyle = 'rgba(183,180,174,0.22)'
         ctx.fill()
       })
@@ -218,7 +297,7 @@ useEffect(() => {
           const y = a.y + (b.y - a.y) * p.t
           const glow = Math.sin(p.t * Math.PI)
           ctx.beginPath()
-          ctx.arc(x, y, 2, 0, Math.PI * 2)
+          ctx.arc(x, y, 2, 0, TAU)
           ctx.fillStyle = `rgba(183,180,174,${glow * 0.85})`
           ctx.fill()
         }
@@ -231,6 +310,8 @@ useEffect(() => {
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', resize)
+      if (!reduced) window.removeEventListener('mousemove', onPointerMove)
+      if (st) st.kill()
     }
   }, [])
 
@@ -241,9 +322,4 @@ useEffect(() => {
       aria-hidden="true"
     />
   )
-  return () => {
-  cancelAnimationFrame(raf)
-  window.removeEventListener('resize', resize)
-  ScrollTrigger.getAll().forEach((t) => t.kill())
-}
 }
