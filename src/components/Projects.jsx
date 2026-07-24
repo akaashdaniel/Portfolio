@@ -76,7 +76,7 @@ function ProjectCard({ p, i, isOpen, onToggle }) {
               {p.name}
             </h3>
             {p.badge && (
-              <span className="font-mono text-[10px] tracking-wide text-verified bg-verified/10 border border-verified/25 rounded-full px-2.5 py-1 whitespace-nowrap">
+              <span className="font-mono text-[10px] tracking-wide text-ink bg-verified/40 border border-verified/60 rounded-full px-2.5 py-1 whitespace-nowrap">
                 {p.badge}
               </span>
             )}

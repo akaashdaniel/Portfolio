@@ -65,7 +65,7 @@ export default function Experience() {
                     </span>
                   </div>
                   <div className="text-[12.5px] text-mutedlo mb-3">{j.sub}</div>
-                  <div className="text-[13px] text-verified font-medium mb-4">{j.role}</div>
+                  <div className="text-[13px] text-signal2 font-medium mb-4">{j.role}</div>
                   <ul className="space-y-2">
                     {j.points.map((p) => (
                       <li key={p} className="text-[13.5px] text-muted leading-relaxed pl-4 relative">
